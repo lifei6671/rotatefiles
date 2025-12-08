@@ -26,8 +26,19 @@ type Result[T any] struct {
 	Updated bool
 }
 
-// PeriodicGenerator 周期任务执行器
-type PeriodicGenerator[T any] struct {
+type PeriodicGenerator[T any] interface {
+	// Start 启动发生器
+	Start(_ context.Context) error
+	// Stop 停止发生器
+	Stop(ctx context.Context) error
+	// Wait 等待发生器关闭完成
+	Wait()
+	// Latest 获取最后一次生产的结果
+	Latest() Result[T]
+}
+
+// SimplePeriodicGenerator 周期任务执行器
+type SimplePeriodicGenerator[T any] struct {
 	fn        Generator[T]
 	interval  time.Duration
 	lock      sync.RWMutex
@@ -45,32 +56,32 @@ type PeriodicGenerator[T any] struct {
 }
 
 // PeriodicOption 配置项
-type PeriodicOption[T any] func(pg *PeriodicGenerator[T])
+type PeriodicOption[T any] func(pg *SimplePeriodicGenerator[T])
 
 // WithImmediate 表示 Start 后立即执行一次
 func WithImmediate[T any]() PeriodicOption[T] {
-	return func(pg *PeriodicGenerator[T]) {
+	return func(pg *SimplePeriodicGenerator[T]) {
 		pg.immediate = true
 	}
 }
 
 // WithRetryDelay 设置执行失败后的额外等待时间
 func WithRetryDelay[T any](delay time.Duration) PeriodicOption[T] {
-	return func(pg *PeriodicGenerator[T]) {
+	return func(pg *SimplePeriodicGenerator[T]) {
 		pg.retryDelay = delay
 	}
 }
 
 // WithErrorHandler 执行失败时的回调
 func WithErrorHandler[T any](handler func(err error)) PeriodicOption[T] {
-	return func(pg *PeriodicGenerator[T]) {
+	return func(pg *SimplePeriodicGenerator[T]) {
 		pg.onError = handler
 	}
 }
 
 // WithParentContext 允许外部传递父 Context
 func WithParentContext[T any](parent context.Context) PeriodicOption[T] {
-	return func(pg *PeriodicGenerator[T]) {
+	return func(pg *SimplePeriodicGenerator[T]) {
 		if parent == nil {
 			return
 		}
@@ -83,14 +94,14 @@ func NewPeriodicGenerator[T any](
 	fn Generator[T],
 	interval time.Duration,
 	opts ...PeriodicOption[T],
-) *PeriodicGenerator[T] {
+) *SimplePeriodicGenerator[T] {
 	if interval <= 0 {
 		panic("periodic: interval must be > 0")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	pg := &PeriodicGenerator[T]{
+	pg := &SimplePeriodicGenerator[T]{
 		fn:       fn,
 		interval: interval,
 		ctx:      ctx,
@@ -110,32 +121,34 @@ func NewPeriodicGeneratorFunc[T any](
 	fn func(ctx context.Context) (T, error),
 	interval time.Duration,
 	opts ...PeriodicOption[T],
-) *PeriodicGenerator[T] {
+) *SimplePeriodicGenerator[T] {
 	return NewPeriodicGenerator[T](GeneratorFunc[T](fn), interval, opts...)
 }
 
 // Start 启动运行
-func (pg *PeriodicGenerator[T]) Start() {
+func (pg *SimplePeriodicGenerator[T]) Start(_ context.Context) error {
 	pg.startOnce.Do(func() {
 		go func() {
 			defer close(pg.stopped)
 			pg.runLoop()
 		}()
 	})
+	return nil
 }
 
 // Stop 请求停止周期执行
-func (pg *PeriodicGenerator[T]) Stop() {
+func (pg *SimplePeriodicGenerator[T]) Stop(_ context.Context) error {
 	pg.cancel()
+	return nil
 }
 
 // Wait 阻塞等待执行退出
-func (pg *PeriodicGenerator[T]) Wait() {
+func (pg *SimplePeriodicGenerator[T]) Wait() {
 	<-pg.stopped
 }
 
 // runLoop 负责周期调度逻辑
-func (pg *PeriodicGenerator[T]) runLoop() {
+func (pg *SimplePeriodicGenerator[T]) runLoop() {
 	if pg.immediate {
 		pg.runOnce()
 	}
@@ -147,13 +160,26 @@ func (pg *PeriodicGenerator[T]) runLoop() {
 	for {
 		wait := time.Until(next)
 		if wait > 0 {
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(wait)
+
 			select {
-			case <-time.After(wait):
+			case <-timer.C:
 			case <-pg.ctx.Done():
 				return
 			}
+		} else {
+			select {
+			case <-pg.ctx.Done():
+				return
+			default:
+			}
 		}
-		timer.Reset(wait)
 		if pg.ctx.Err() != nil {
 			return
 		}
@@ -164,7 +190,7 @@ func (pg *PeriodicGenerator[T]) runLoop() {
 }
 
 // runOnce 调用 Generate 方法并写入 latest
-func (pg *PeriodicGenerator[T]) runOnce() {
+func (pg *SimplePeriodicGenerator[T]) runOnce() {
 	value, err := pg.fn.Generate(pg.ctx)
 
 	pg.lock.Lock()
@@ -193,7 +219,7 @@ func (pg *PeriodicGenerator[T]) runOnce() {
 }
 
 // Latest 返回快照
-func (pg *PeriodicGenerator[T]) Latest() Result[T] {
+func (pg *SimplePeriodicGenerator[T]) Latest() Result[T] {
 	pg.lock.RLock()
 	defer pg.lock.RUnlock()
 	return pg.latest

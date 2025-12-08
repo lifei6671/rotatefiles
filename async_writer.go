@@ -27,10 +27,11 @@ type asyncWriter struct {
 	closed  atomic.Bool   // 是否已经关闭
 
 	// 统计指标
-	writeCount atomic.Uint64 // 成功入队的写次数
-	writeBytes atomic.Uint64 // 成功入队的字节总数
-	dropCount  atomic.Uint64 // 因队列满/超时导致被丢弃的写次数
-	errorCount atomic.Uint64 // 底层 Write 出错次数
+	writeCount atomic.Uint64             // 成功入队的写次数
+	writeBytes atomic.Uint64             // 成功入队的字节总数
+	dropCount  atomic.Uint64             // 因队列满/超时导致被丢弃的写次数
+	errorCount atomic.Uint64             // 底层 Write 出错次数
+	lastTime   atomic.Pointer[time.Time] // 最后写入时间
 
 	// 错误回调
 	lock     sync.RWMutex
@@ -74,7 +75,8 @@ func (w *asyncWriter) asyncWrite() {
 
 	for b := range w.ch {
 		n, err := w.wc.Write(b)
-
+		flushTime := time.Now()
+		w.lastTime.Store(&flushTime)
 		if err != nil {
 			w.errorCount.Add(1)
 
