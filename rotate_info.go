@@ -2,6 +2,7 @@ package rotatefiles
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -43,12 +44,12 @@ func (fi RotateInfo) IsNeedSymlink() bool {
 //
 // 该方法是生产级日志轮转的基础设施，保证 “当前日志文件” 的链接引用一致性。
 func (fi RotateInfo) CheckSymlink() error {
-	if fi.Symlink == "" || fi.Symlink == fi.Filename {
+	if !fi.IsNeedSymlink() {
 		// 不需要创建符号链接（例如直接写文件，不使用 symlink）
 		return nil
 	}
-	if !fileutil.FileExists(fi.Filename) {
-		return fmt.Errorf("CheckSymlink: target file does not exist: %s", fi.Filename)
+	if !fileutil.FileExists(fi.FilePath) {
+		return fmt.Errorf("CheckSymlink: target file does not exist: %q", fi.FilePath)
 	}
 
 	symDir := filepath.Dir(fi.Symlink)
@@ -64,7 +65,7 @@ func (fi RotateInfo) CheckSymlink() error {
 		// 判断是否是符号链接
 		if _, err := os.Readlink(fi.Symlink); err == nil {
 			// 已经是符号链接，检查是否指向正确目标
-			if fileutil.IsSameFile(fi.Symlink, fi.Filename) {
+			if fileutil.IsSameFile(fi.Symlink, fi.FilePath) {
 				// 正常情况，已经指向目标文件，直接返回
 				return nil
 			}
@@ -86,10 +87,11 @@ func (fi RotateInfo) CheckSymlink() error {
 	// 2. 构造相对路径
 	// -------------------------
 	target := fi.Filename
-	if rel, err := filepath.Rel(symDir, fi.Filename); err == nil {
+	if rel, err := filepath.Rel(symDir, fi.FilePath); err == nil {
 		target = rel
 	}
 
+	log.Println(target, fi.Symlink)
 	// -------------------------
 	// 3. 创建符号链接（带 retry）
 	// -------------------------
@@ -105,7 +107,7 @@ func (fi RotateInfo) CheckSymlink() error {
 		// 处理并发写入场景：
 		// 如果其他进程创建了 Symlink，则验证是否正确指向
 		if os.IsExist(createErr) {
-			if fileutil.IsSameFile(fi.Symlink, fi.Filename) {
+			if fileutil.IsSameFile(fi.Symlink, fi.FilePath) {
 				return nil // 已经被别人正确创建
 			}
 			// 否则删除并重试

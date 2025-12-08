@@ -29,7 +29,9 @@ func main() {
 		MaxFileNum:    10,
 	}
 
-	rotateFile, err := rotatefiles.NewRotateFile(opt)
+	rotateFile, err := rotatefiles.NewRotateFile(opt, rotatefiles.WithOnErr(func(err error) {
+		log.Println(err)
+	}))
 	if err != nil {
 		log.Fatalf("new rotatefile failed: %s", err)
 	}
