@@ -1,3 +1,0 @@
-package rotatefiles
-
-import "time"
