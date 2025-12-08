@@ -9,15 +9,28 @@ import (
 	"github.com/lifei6671/rotatefiles/internal/fileutil"
 )
 
-// FileInfo 用于描述日志文件与软链之间的绑定关系
+// RotateInfo 用于描述日志文件与软链之间的绑定关系
 //
 //	RawFilename:   原始配置中的文件路径（未被格式化或扩展）
 //	Symlink:       指向当前写入文件的符号链接，例如 "app.log"
 //	Filename:      实际写入的物理文件，例如 "app.log.20250101"
-type FileInfo struct {
-	RawFilename string
-	Symlink     string
-	Filename    string
+type RotateInfo struct {
+	// 日志软链
+	Symlink string
+	// 原始日志路径：./log/app.log
+	Filename string
+	// 实际软链指向的文件地址： ./log/app.log.2025111111
+	FilePath string
+}
+
+// Equal 判断两个配置是否一致
+func (fi RotateInfo) Equal(o RotateInfo) bool {
+	return fi.Symlink == o.Symlink && fi.Filename == o.Filename && fi.FilePath == o.FilePath
+}
+
+// IsNeedSymlink 判断软链是否和目标文件一致
+func (fi RotateInfo) IsNeedSymlink() bool {
+	return fi.Symlink != "" && fi.Symlink != fi.FilePath
 }
 
 // CheckSymlink 保证 Symlink 必须正确指向 Filename。
@@ -29,7 +42,7 @@ type FileInfo struct {
 //   - 多进程/多 writer 并发竞争：采用 retry 策略消除竞争影响
 //
 // 该方法是生产级日志轮转的基础设施，保证 “当前日志文件” 的链接引用一致性。
-func (fi FileInfo) CheckSymlink() error {
+func (fi RotateInfo) CheckSymlink() error {
 	if fi.Symlink == "" || fi.Symlink == fi.Filename {
 		// 不需要创建符号链接（例如直接写文件，不使用 symlink）
 		return nil
@@ -97,7 +110,7 @@ func (fi FileInfo) CheckSymlink() error {
 			}
 			// 否则删除并重试
 			_ = os.Remove(fi.Symlink)
-			time.Sleep(30 * time.Millisecond)
+			time.Sleep(5 * time.Millisecond)
 			continue
 		}
 

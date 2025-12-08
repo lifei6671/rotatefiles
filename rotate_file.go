@@ -26,26 +26,6 @@ type RotateOption struct {
 	MaxFileNum int
 }
 
-// RotateInfo 文件切割的必要参数
-type RotateInfo struct {
-	// 日志软链
-	Symlink string
-	// 原始日志路径：./log/app.log
-	Filename string
-	// 实际软链指向的文件地址： ./log/app.log.2025111111
-	FilePath string
-}
-
-// Equal 判断两个配置是否一致
-func (f RotateInfo) Equal(o RotateInfo) bool {
-	return f.Symlink == o.Symlink && f.Filename == o.Filename && f.FilePath == o.FilePath
-}
-
-// IsNeedSymlink 判断软链是否和目标文件一致
-func (f RotateInfo) IsNeedSymlink() bool {
-	return f.Symlink != "" && f.Symlink != f.FilePath
-}
-
 type RotateGenerator interface {
 	// Start 启动生成器
 	Start(ctx context.Context) error
@@ -114,14 +94,24 @@ type rotateFile struct {
 	// 写缓冲
 	buf AsyncWriter
 
+	onErr func(err error)
+
 	flushTicker *time.Ticker
 	stopChan    chan struct{}
 
 	lock sync.Mutex
 }
 
+type RotateFileOption func(*rotateFile)
+
+func WithOnErr(fn func(err error)) RotateFileOption {
+	return func(f *rotateFile) {
+		f.onErr = fn
+	}
+}
+
 // NewRotateFile 创建最终使用的 Writer
-func NewRotateFile(opt *RotateOption) (io.WriteCloser, error) {
+func NewRotateFile(opt *RotateOption, opts ...RotateFileOption) (io.WriteCloser, error) {
 	if opt == nil {
 		return nil, errors.New("RotateOption is nil")
 	}
@@ -139,6 +129,9 @@ func NewRotateFile(opt *RotateOption) (io.WriteCloser, error) {
 		opt:         opt,
 		stopChan:    make(chan struct{}),
 		flushTicker: time.NewTicker(opt.FlushDuration),
+	}
+	for _, optFn := range opts {
+		optFn(rf)
 	}
 
 	// 初始化第一次配置
@@ -248,8 +241,8 @@ func (r *rotateFile) applyConfig(info RotateInfo) error {
 
 	r.lastFlush = time.Now()
 
-	if info.IsNeedSymlink() {
-		_ = r.applySymlink(info)
+	if err := info.CheckSymlink(); err != nil && r.onErr != nil {
+		r.onErr(fmt.Errorf("[applyConfig] check symlink failed: %w - %s", err, info.FilePath))
 	}
 
 	r.cleanOldFilesLocked()
@@ -267,7 +260,9 @@ func (r *rotateFile) rotateTo(info RotateInfo) error {
 
 	// 旧 writer flush
 	if r.buf != nil {
-		_ = r.buf.Flush(20 * time.Millisecond)
+		if err := r.buf.Flush(20 * time.Millisecond); err != nil && r.onErr != nil {
+			r.onErr(fmt.Errorf("[rotateTo]flush failed: %w", err))
+		}
 		_ = r.buf.Close()
 	}
 	// 关闭旧文件
@@ -286,23 +281,9 @@ func (r *rotateFile) doFlush() {
 	if r.buf == nil {
 		return
 	}
-	_ = r.buf.Flush(20 * time.Millisecond)
-}
-
-// applySymlink 创建软链
-func (r *rotateFile) applySymlink(info RotateInfo) error {
-	if info.Symlink == "" {
-		return nil
+	if err := r.buf.Flush(20 * time.Millisecond); err != nil && r.onErr != nil {
+		r.onErr(fmt.Errorf("[doFlush]flush failed: %w", err))
 	}
-
-	_ = os.Remove(info.Symlink) // 忽略错误
-
-	rel, err := filepath.Rel(filepath.Dir(info.Symlink), info.FilePath)
-	if err != nil {
-		return err
-	}
-
-	return os.Symlink(rel, info.Symlink)
 }
 
 // cleanOldFilesLocked 清理超限文件
@@ -349,6 +330,8 @@ func (r *rotateFile) cleanOldFilesLocked() {
 
 	delList := matched[:len(matched)-r.opt.MaxFileNum]
 	for _, f := range delList {
-		_ = os.Remove(f)
+		if err := os.Remove(f); err != nil && r.onErr != nil {
+			r.onErr(fmt.Errorf("remove file failed: %w - %s", err, f))
+		}
 	}
 }

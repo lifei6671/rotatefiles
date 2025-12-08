@@ -27,11 +27,10 @@ type asyncWriter struct {
 	closed  atomic.Bool   // 是否已经关闭
 
 	// 统计指标
-	writeCount atomic.Uint64             // 成功入队的写次数
-	writeBytes atomic.Uint64             // 成功入队的字节总数
-	dropCount  atomic.Uint64             // 因队列满/超时导致被丢弃的写次数
-	errorCount atomic.Uint64             // 底层 Write 出错次数
-	lastTime   atomic.Pointer[time.Time] // 最后写入时间
+	writeCount atomic.Uint64 // 成功入队的写次数
+	writeBytes atomic.Uint64 // 成功入队的字节总数
+	dropCount  atomic.Uint64 // 因队列满/超时导致被丢弃的写次数
+	errorCount atomic.Uint64 // 底层 Write 出错次数
 
 	// 错误回调
 	lock     sync.RWMutex
@@ -75,8 +74,6 @@ func (w *asyncWriter) asyncWrite() {
 
 	for b := range w.ch {
 		n, err := w.wc.Write(b)
-		flushTime := time.Now()
-		w.lastTime.Store(&flushTime)
 		if err != nil {
 			w.errorCount.Add(1)
 
@@ -225,15 +222,17 @@ func (w *asyncWriter) Stats() AsyncWriterStats {
 	}
 }
 
-// SetWriterErr 设置底层写错误回调。
-// 回调在异步写协程中调用，不应执行耗时过长操作。
-func (w *asyncWriter) SetWriterErr(call func(int, error)) {
-	if w.isClosed() {
-		return
+type AsyncWriterOption func(*asyncWriter)
+
+func WithTimeout(timeout time.Duration) AsyncWriterOption {
+	return func(a *asyncWriter) {
+		a.timeout = timeout
 	}
-	w.lock.Lock()
-	w.callback = call
-	w.lock.Unlock()
+}
+func WithErrCallback(callback func(n int, err error)) AsyncWriterOption {
+	return func(a *asyncWriter) {
+		a.callback = callback
+	}
 }
 
 // NewWriterCloser 创建一个带缓冲、支持超时控制的异步 writer。
@@ -245,21 +244,23 @@ func (w *asyncWriter) SetWriterErr(call func(int, error)) {
 //     >0  -> 在 timeout 内尝试入队，超时返回 ErrWriteTimeout
 //
 // 返回值实现了 io.WriteCloser 接口；如需访问 Flush/Stats，可以类型断言为 AsyncWriter 接口。
-func NewWriterCloser(wc io.WriteCloser, size int, timeout time.Duration) io.WriteCloser {
-	return NewAsyncWriter(wc, size, timeout)
+func NewWriterCloser(wc io.WriteCloser, size int, opts ...AsyncWriterOption) io.WriteCloser {
+	return NewAsyncWriter(wc, size, opts...)
 }
 
-func NewAsyncWriter(wc io.WriteCloser, size int, timeout time.Duration) AsyncWriter {
+func NewAsyncWriter(wc io.WriteCloser, size int, opts ...AsyncWriterOption) AsyncWriter {
 	if size <= 0 {
 		// 防御：避免 size=0 导致所有写都阻塞在队列上
 		size = 1
 	}
 
 	w := &asyncWriter{
-		wc:      wc,
-		ch:      make(chan []byte, size),
-		done:    make(chan struct{}),
-		timeout: timeout,
+		wc:   wc,
+		ch:   make(chan []byte, size),
+		done: make(chan struct{}),
+	}
+	for _, opt := range opts {
+		opt(w)
 	}
 
 	w.closed.Store(false)

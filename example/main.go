@@ -23,7 +23,7 @@ func main() {
 	opt := &rotatefiles.RotateOption{
 		RotateGenerator: generator,
 		NewWriter: func(ctx context.Context, w io.WriteCloser) (rotatefiles.AsyncWriter, error) {
-			return rotatefiles.NewAsyncWriter(w, 2014, time.Microsecond*10), nil
+			return rotatefiles.NewAsyncWriter(w, 2014, rotatefiles.WithTimeout(time.Microsecond*10)), nil
 		},
 		FlushDuration: time.Second,
 		MaxFileNum:    10,
