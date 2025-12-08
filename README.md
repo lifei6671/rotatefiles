@@ -114,26 +114,26 @@ gen := NewPeriodicGeneratorFunc(
 
 ```
                 ┌───────────────────┐
-                │ RotateGenerator  │
-                │ 生成 FilePath    │
+                │ RotateGenerator   │
+                │ 生成 FilePath      │
                 └───────┬───────────┘
                         │周期触发
                         ▼
          ┌──────────────────────────────────┐
-         │ PeriodicGenerator[RotateInfo] │
-         │ 缓存最新 FilePath              │
+         │ PeriodicGenerator[RotateInfo]    │
+         │ 缓存最新 FilePath                  │
          └───────┬──────────────────────────┘
                  │每次 flush 时检查
                  ▼
            ┌───────────────┐
-           │ rotateFile   │
-           │ 文件切换判断   │
+           │ rotateFile    │
+           │ 文件切换判断     │
            └───────┬───────┘
                    │创建新文件 + symlink
                    ▼
           ┌────────────────────────┐
-          │ AsyncWriter（包装）    │
-          │缓冲 / 异步落盘 / 优化IO │
+          │ AsyncWriter（包装）      │
+          │缓冲 / 异步落盘 / 优化IO    │
           └────────────────────────┘
 ```
 
