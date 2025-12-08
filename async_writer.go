@@ -236,7 +236,7 @@ func (w *asyncWriter) SetWriterErr(call func(int, error)) {
 	w.lock.Unlock()
 }
 
-// NewAsyncWriter 创建一个带缓冲、支持超时控制的异步 writer。
+// NewWriterCloser 创建一个带缓冲、支持超时控制的异步 writer。
 //   - wc: 底层 io.WriteCloser
 //   - size: 缓冲队列容量（条目数）
 //   - timeout:
@@ -245,7 +245,11 @@ func (w *asyncWriter) SetWriterErr(call func(int, error)) {
 //     >0  -> 在 timeout 内尝试入队，超时返回 ErrWriteTimeout
 //
 // 返回值实现了 io.WriteCloser 接口；如需访问 Flush/Stats，可以类型断言为 AsyncWriter 接口。
-func NewAsyncWriter(wc io.WriteCloser, size int, timeout time.Duration) io.WriteCloser {
+func NewWriterCloser(wc io.WriteCloser, size int, timeout time.Duration) io.WriteCloser {
+	return NewAsyncWriter(wc, size, timeout)
+}
+
+func NewAsyncWriter(wc io.WriteCloser, size int, timeout time.Duration) AsyncWriter {
 	if size <= 0 {
 		// 防御：避免 size=0 导致所有写都阻塞在队列上
 		size = 1

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,7 +19,7 @@ type RotateOption struct {
 	// RotateGenerator 配置文件发生器
 	RotateGenerator RotateGenerator
 	// NewWriter 对原始写入器进行包装，用于 提升效率
-	NewWriter func(context.Context, io.Writer) (AsyncWriter, error)
+	NewWriter func(context.Context, io.WriteCloser) (AsyncWriter, error)
 	// FlushDuration 控制写入磁盘间隔
 	FlushDuration time.Duration
 	// MaxFileNum 保存的最大文件数量，多于该数量则清理，如果为0则忽略
@@ -46,6 +47,8 @@ func (f RotateInfo) IsNeedSymlink() bool {
 }
 
 type RotateGenerator interface {
+	// Start 启动生成器
+	Start(ctx context.Context) error
 	// Generate 生成配置信息
 	Generate() RotateInfo
 	// Stop 关闭生成器
@@ -79,11 +82,12 @@ func NewSimpleRotateGenerator(rule string, filename string, onErr func(err error
 				return RotateInfo{
 					Symlink:  filename,
 					Filename: filename,
-					FilePath: filepath.Join(filename, rt.SuffixFunc()),
+					FilePath: strings.Join([]string{filename, rt.SuffixFunc()}, ""),
 				}, nil
 			},
 			rt.Duration,
 			periodic.WithErrorHandler[RotateInfo](onErr),
+			periodic.WithImmediate[RotateInfo](),
 		),
 	}, nil
 }
@@ -94,6 +98,10 @@ func (r *rotateGenerator) Generate() RotateInfo {
 
 func (r *rotateGenerator) Stop(ctx context.Context) error {
 	return r.p.Stop(ctx)
+}
+
+func (r *rotateGenerator) Start(ctx context.Context) error {
+	return r.p.Start(ctx)
 }
 
 type rotateFile struct {
@@ -155,7 +163,6 @@ func (r *rotateFile) loop() {
 		select {
 		case <-r.flushTicker.C:
 			r.doFlush()
-
 			cfg := r.opt.RotateGenerator.Generate()
 			if !cfg.Equal(lastCfg) {
 				_ = r.rotateTo(cfg)
@@ -225,7 +232,7 @@ func (r *rotateFile) applyConfig(info RotateInfo) error {
 	// 打开新文件
 	fd, err := os.OpenFile(info.FilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
-		return fmt.Errorf("open file failed: %w", err)
+		return fmt.Errorf("open file failed: %w - %s", err, info.FilePath)
 	}
 
 	// 创建新 writer
@@ -252,9 +259,9 @@ func (r *rotateFile) applyConfig(info RotateInfo) error {
 // rotateTo 尝试切换到新目标文件
 func (r *rotateFile) rotateTo(info RotateInfo) error {
 	r.lock.Lock()
-	defer r.lock.Unlock()
 
 	if info.Equal(r.currentCfg) {
+		r.lock.Unlock()
 		return nil
 	}
 
@@ -267,7 +274,7 @@ func (r *rotateFile) rotateTo(info RotateInfo) error {
 	if r.outFile != nil {
 		_ = r.outFile.Close()
 	}
-
+	r.lock.Unlock()
 	return r.applyConfig(info)
 }
 

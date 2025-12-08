@@ -2,6 +2,7 @@ package periodic
 
 import (
 	"context"
+	"log"
 	"sync"
 	"time"
 )
@@ -112,6 +113,9 @@ func NewPeriodicGenerator[T any](
 	for _, opt := range opts {
 		opt(pg)
 	}
+	if pg.immediate {
+		pg.runOnce()
+	}
 
 	return pg
 }
@@ -149,16 +153,13 @@ func (pg *SimplePeriodicGenerator[T]) Wait() {
 
 // runLoop 负责周期调度逻辑
 func (pg *SimplePeriodicGenerator[T]) runLoop() {
-	if pg.immediate {
-		pg.runOnce()
-	}
-
 	next := time.Now().Add(pg.interval)
 
 	timer := time.NewTimer(pg.interval)
 	defer timer.Stop()
 	for {
 		wait := time.Until(next)
+		log.Println(wait)
 		if wait > 0 {
 			if !timer.Stop() {
 				select {
@@ -192,7 +193,7 @@ func (pg *SimplePeriodicGenerator[T]) runLoop() {
 // runOnce 调用 Generate 方法并写入 latest
 func (pg *SimplePeriodicGenerator[T]) runOnce() {
 	value, err := pg.fn.Generate(pg.ctx)
-
+	log.Println(value, err)
 	pg.lock.Lock()
 	if err != nil {
 		pg.latest.Err = err
