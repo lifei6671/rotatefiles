@@ -2,7 +2,6 @@ package periodic
 
 import (
 	"context"
-	"log"
 	"sync"
 	"time"
 )
@@ -159,7 +158,6 @@ func (pg *SimplePeriodicGenerator[T]) runLoop() {
 	defer timer.Stop()
 	for {
 		wait := time.Until(next)
-		log.Println(wait)
 		if wait > 0 {
 			if !timer.Stop() {
 				select {
@@ -193,7 +191,6 @@ func (pg *SimplePeriodicGenerator[T]) runLoop() {
 // runOnce 调用 Generate 方法并写入 latest
 func (pg *SimplePeriodicGenerator[T]) runOnce() {
 	value, err := pg.fn.Generate(pg.ctx)
-	log.Println(value, err)
 	pg.lock.Lock()
 	if err != nil {
 		pg.latest.Err = err
