@@ -11,12 +11,47 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lifei6671/rotatefiles/internal/fileutil"
 	"github.com/lifei6671/rotatefiles/periodic"
 )
 
+//
+// ================================
+// ===== Public Types & API =======
+// ================================
+//
+
+// RotateOption 传递给 NewRotateFile 的配置项。
+// 该结构定义日志文件轮转规则、文件创建方式、清理策略等。
+//
+// RotateOption 的核心思想是将文件输出抽象为周期性配置结果，
+// 配置由 RotateGenerator 推送，而 NewRotateFile 根据不同配置动态切换到新的日志文件。
+//
+// 必选项：
+//   - RotateGenerator
+//   - NewWriter
+//
+// 可选项：
+//   - FlushDuration：周期 Flush 底层 writer 内容，避免积压。
+//   - CheckDuration：周期检查文件是否被外部删除；若删除会自动恢复。
+//   - MaxFileNum：最多保留历史文件数量。
+//
+// 使用示例：
+//
+//	rg, _ := NewSimpleRotateGenerator("1day", "app.log", nil)
+//	opt := &RotateOption{
+//		RotateGenerator: rg,
+//		NewWriter: func(ctx context.Context, w io.WriteCloser) (AsyncWriter, error) {
+//			return NewBufferedWriter(w), nil
+//		},
+//		FlushDuration: time.Second,
+//		MaxFileNum:    7,
+//	}
+//	w, _ := NewRotateFile(opt)
+//	w.Write([]byte("hello"))
 type RotateOption struct {
 	// RotateGenerator 配置文件发生器
 	RotateGenerator RotateGenerator
@@ -29,6 +64,18 @@ type RotateOption struct {
 	// MaxFileNum 保存的最大文件数量，多于该数量则清理，如果为0则忽略
 	MaxFileNum int
 }
+
+// RotateGenerator 定义日志轮转策略来源。
+// 该接口抽象了“周期生成 RotateInfo”的行为。
+//
+// 一个典型实现为 periodic.SimplePeriodicGenerator，
+// 它每隔固定时长生成一个 RotateInfo。
+//
+// RotateGenerator 必须确保：
+//   - 第一次 Generate() 调用能返回有效 FilePath
+//   - OnGenerated 回调应该在切换文件时触发
+//
+// 推荐使用 NewSimpleRotateGenerator 快速构建。
 
 type RotateGenerator interface {
 	// Start 启动生成器
@@ -47,8 +94,13 @@ type rotateGenerator struct {
 	p periodic.PeriodicGenerator[RotateInfo]
 }
 
+// GeneratorFunc 是 RotateGenerator 的函数适配器。
 type GeneratorFunc func(ctx context.Context) (RotateInfo, error)
 
+// NewRotateGenerator 创建一个通用的 RotateGenerator。
+// generator 用于生成 RotateInfo，interval 表示回调周期。
+//
+// 推荐场景：自定义非时间轮转规则，例如按照写入大小切分。
 // NewRotateGenerator 初始化一个配置生成器
 func NewRotateGenerator(generator GeneratorFunc, interval time.Duration) RotateGenerator {
 	return &rotateGenerator{
@@ -56,7 +108,14 @@ func NewRotateGenerator(generator GeneratorFunc, interval time.Duration) RotateG
 	}
 }
 
-// NewSimpleRotateGenerator 使用内置规则
+// NewSimpleRotateGenerator 使用内置规则创建 RotateGenerator。
+// rule 必须来自 defaultRotateRules，例如：
+//   - "1day"、"1hour"、"5min" 等
+//
+// filename 表示主日志文件名称；
+// 轮转后的文件名自动附加规则生成的后缀。
+//
+// 当内部生成器遇到错误时，会触发 onErr 回调。
 func NewSimpleRotateGenerator(rule string, filename string, onErr func(err error)) (RotateGenerator, error) {
 	rt, has := defaultRotateRules[rule]
 	if !has {
@@ -110,18 +169,49 @@ type rotateFile struct {
 	flushTicker *time.Ticker
 	checkTicker *time.Ticker
 	stopChan    chan struct{}
+	closed      atomic.Bool
 
 	lock sync.Mutex
 }
 
+// RotateFileOption 表示对 rotateFile 额外增强的选项。
 type RotateFileOption func(*rotateFile)
 
+// WithOnErr 注册错误处理回调。
+// 所有内部错误并不会影响主流程，只会通过 OnErr 提供观察能力。
 func WithOnErr(fn func(err error)) RotateFileOption {
 	return func(f *rotateFile) {
 		f.onErr = fn
 	}
 }
 
+// NewRotateFile 创建一个支持自动轮转的 io.WriteCloser。
+// 返回的 writer 可直接作为日志输出使用。
+//
+// 调用方应保证：
+//   - 必须保持返回 writer 的生命周期
+//   - 使用完成后调用 Close()，避免底层资源泄漏
+//
+// 它具备以下能力：
+//  1. 根据 RotateGenerator 推送的配置自动切换文件
+//  2. 按 FlushDuration 定时落盘，避免内存积压
+//  3. 按 MaxFileNum 保留历史日志文件
+//  4. 如文件被外部删除，会自动恢复
+//
+// 调用示例：
+//
+//	rg, _ := NewSimpleRotateGenerator("1day", "app.log", nil)
+//	opt := &RotateOption{
+//		RotateGenerator: rg,
+//		NewWriter: func(ctx context.Context, wc io.WriteCloser) (AsyncWriter, error) {
+//			return NewAsyncWriterImpl(wc), nil
+//		},
+//		FlushDuration: time.Second,
+//		MaxFileNum:    3,
+//	}
+//	w, _ := NewRotateFile(opt, WithOnErr(log.Println))
+//	w.Write([]byte("start log"))
+//
 // NewRotateFile 创建最终使用的 Writer
 func NewRotateFile(opt *RotateOption, opts ...RotateFileOption) (io.WriteCloser, error) {
 	if opt == nil {
@@ -185,7 +275,7 @@ func (r *rotateFile) doCheckOpened() {
 }
 
 func (r *rotateFile) fileExists(outFile string) bool {
-	if !fileutil.FileExists(outFile) {
+	if r.outFile == nil || !fileutil.FileExists(outFile) {
 		return false
 	}
 	info, err := os.Stat(outFile)
@@ -234,7 +324,20 @@ func (r *rotateFile) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// Close 关闭底层 output writer。
+// Close 具有幂等性，可安全执行多次。
+//
+// Close 会：
+//   - flush buffer
+//   - 关闭底层文件
+//   - 停止定时检查
+//   - 停止 RotateGenerator
+//
+// Close 之后文件不会再“复活”。
 func (r *rotateFile) Close() error {
+	if !r.closed.CompareAndSwap(false, true) {
+		return nil
+	}
 	close(r.stopChan)
 
 	r.lock.Lock()
@@ -260,8 +363,15 @@ func (r *rotateFile) Close() error {
 	return errors.Join(flushErr, bufCloseErr, fileCloseErr)
 }
 
-// applyConfig 初始化或切换文件
+// applyConfig 根据最新 RotateInfo 切换日志文件。
+// 若 FilePath 不存在，先创建；若旧文件与配置不一致，则关闭旧文件。
+//
+// 该方法内部保证线程安全，不需外部加锁。
 func (r *rotateFile) applyConfig(info RotateInfo) error {
+	// 如果已经关闭了，则直接返回
+	if r.closed.Load() {
+		return nil
+	}
 	r.lock.Lock()
 	defer r.lock.Unlock()
 	fileExists := r.fileExists(info.FilePath)
@@ -314,7 +424,8 @@ func (r *rotateFile) applyConfig(info RotateInfo) error {
 	return nil
 }
 
-// doFlush 执行主动落盘
+// doFlush 执行周期 flush。
+// flush 失败不会中断主流程，但会通过 onErr 暴露。
 func (r *rotateFile) doFlush(dur time.Duration) {
 	r.lock.Lock()
 	defer r.lock.Unlock()
@@ -330,7 +441,9 @@ func (r *rotateFile) doFlush(dur time.Duration) {
 	}
 }
 
-// cleanOldFilesLocked 清理超限文件
+// cleanOldFilesLocked 执行文件清理策略。
+// 该操作严格基于 rotate rule 的后缀正则执行。
+// 若 Rule 未配置正则，将跳过清理。
 func (r *rotateFile) cleanOldFilesLocked() {
 	if r.opt.MaxFileNum <= 0 {
 		return
@@ -366,7 +479,6 @@ func (r *rotateFile) cleanOldFilesLocked() {
 		suffix := name[len(prefix):]
 		// 如果正则能匹配到则说明要清理
 		if rt.SuffixExpr.MatchString(suffix) {
-			log.Println(suffix, name)
 			matched = append(matched, filepath.Join(dir, e.Name()))
 		}
 	}
