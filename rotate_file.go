@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -468,7 +467,6 @@ func (r *rotateFile) cleanOldFilesLocked() {
 			continue
 		}
 		name := e.Name()
-		log.Println(name, base)
 		if filepath.Base(name) == base {
 			continue // 原始软链文件不删
 		}
