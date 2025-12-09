@@ -35,6 +35,9 @@ type PeriodicGenerator[T any] interface {
 	Wait()
 	// Latest 获取最后一次生产的结果
 	Latest() Result[T]
+
+	// OnGenerated 注册生成成功回调
+	OnGenerated(fn func(value T, at time.Time))
 }
 
 // SimplePeriodicGenerator 周期任务执行器
@@ -47,8 +50,11 @@ type SimplePeriodicGenerator[T any] struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	latest     Result[T]
-	onError    func(error)
+	latest      Result[T]
+	onError     func(error)
+	onGenerated []func(value T, at time.Time)
+	cbLock      sync.RWMutex
+
 	immediate  bool
 	retryDelay time.Duration
 
@@ -191,6 +197,9 @@ func (pg *SimplePeriodicGenerator[T]) runLoop() {
 // runOnce 调用 Generate 方法并写入 latest
 func (pg *SimplePeriodicGenerator[T]) runOnce() {
 	value, err := pg.fn.Generate(pg.ctx)
+	now := time.Now()
+	updated := err == nil
+
 	pg.lock.Lock()
 	if err != nil {
 		pg.latest.Err = err
@@ -198,13 +207,18 @@ func (pg *SimplePeriodicGenerator[T]) runOnce() {
 	} else {
 		pg.latest.Value = value
 		pg.latest.Updated = true
-		pg.latest.At = time.Now()
+		pg.latest.At = now
 		pg.latest.Err = nil
 	}
 	pg.lock.Unlock()
 
 	if err != nil && pg.onError != nil {
 		go pg.onError(err)
+	}
+
+	// 如果成功 --> 触发所有 onGenerated 回调
+	if updated {
+		pg.triggerGeneratedCallbacks(value, now)
 	}
 
 	if err != nil && pg.retryDelay > 0 {
@@ -216,9 +230,31 @@ func (pg *SimplePeriodicGenerator[T]) runOnce() {
 	}
 }
 
+// 回调执行逻辑
+func (pg *SimplePeriodicGenerator[T]) triggerGeneratedCallbacks(value T, at time.Time) {
+	pg.cbLock.RLock()
+	callbacks := make([]func(value T, at time.Time), len(pg.onGenerated))
+	copy(callbacks, pg.onGenerated)
+	pg.cbLock.RUnlock()
+
+	for _, cb := range callbacks {
+		go cb(value, at)
+	}
+}
+
 // Latest 返回快照
 func (pg *SimplePeriodicGenerator[T]) Latest() Result[T] {
 	pg.lock.RLock()
 	defer pg.lock.RUnlock()
 	return pg.latest
+}
+
+// OnGenerated 新增注册回调
+func (pg *SimplePeriodicGenerator[T]) OnGenerated(fn func(value T, at time.Time)) {
+	if fn == nil {
+		return
+	}
+	pg.cbLock.Lock()
+	defer pg.cbLock.Unlock()
+	pg.onGenerated = append(pg.onGenerated, fn)
 }

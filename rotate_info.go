@@ -2,7 +2,6 @@ package rotatefiles
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -22,6 +21,8 @@ type RotateInfo struct {
 	Filename string
 	// 实际软链指向的文件地址： ./log/app.log.2025111111
 	FilePath string
+	// 使用到的规则
+	RuleName string
 }
 
 // Equal 判断两个配置是否一致
@@ -91,7 +92,6 @@ func (fi RotateInfo) CheckSymlink() error {
 		target = rel
 	}
 
-	log.Println(target, fi.Symlink)
 	// -------------------------
 	// 3. 创建符号链接（带 retry）
 	// -------------------------
