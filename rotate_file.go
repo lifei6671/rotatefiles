@@ -501,3 +501,16 @@ func (r *rotateFile) cleanOldFilesLocked() {
 		}
 	}
 }
+
+func (r *rotateFile) Sync() error {
+	if r.closed.Load() {
+		return nil
+	}
+	r.lock.Lock()
+	defer r.lock.Unlock()
+
+	if r.buf != nil {
+		return r.buf.Flush(time.Microsecond * 10)
+	}
+	return nil
+}
