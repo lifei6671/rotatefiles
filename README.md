@@ -152,6 +152,7 @@ opt := &RotateOption{
 				Symlink:  "app.log",
 				Filename: "app.log",
 				FilePath: "app.log." + t,
+                SuffixExpr :  regexp.MustCompile(`^\.[0-9]{12}$`),
 			}, nil
 		},
 		time.Minute,
@@ -162,6 +163,7 @@ opt := &RotateOption{
 		return NewAsyncBufferedWriter(w), nil
 	},
 	FlushDuration: time.Second,
+    CheckDuration: time.Second,
 }
 opt.RotateGenerator.Start(context.TODO())
 
