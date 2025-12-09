@@ -63,13 +63,12 @@ func (s *SimpleCron) start() error {
 }
 
 func (s *SimpleCron) doCheck() {
-	timer := time.NewTimer(time.Second)
-	defer timer.Stop()
+	tk := time.NewTicker(time.Second)
 	for {
 		select {
 		case <-s.closed:
 			return
-		case <-timer.C:
+		case <-tk.C:
 			s.check()
 		}
 	}
