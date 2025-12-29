@@ -12,7 +12,7 @@ import (
 )
 
 func main() {
-	filename, _ := filepath.Abs("./app.log")
+	filename, _ := filepath.Abs("./log/app.log")
 	generator, err := rotatefiles.NewSimpleRotateGenerator("1min", filename, func(err error) {
 		log.Println(err)
 	})

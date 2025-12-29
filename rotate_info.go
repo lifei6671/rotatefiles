@@ -63,32 +63,40 @@ func (fi RotateInfo) CheckSymlink() error {
 	// -------------------------
 	// 1. 处理已存在的 Symlink 路径
 	// -------------------------
-	if fileutil.FileExists(fi.Symlink) {
-		// 判断是否是符号链接
-		if _, err := os.Readlink(fi.Symlink); err == nil {
+	if info, err := os.Lstat(fi.Symlink); err == nil {
+		// 判断是否是符号链接（Lstat 不会跟随链接）
+		if info.Mode()&os.ModeSymlink != 0 {
 			// 已经是符号链接，检查是否指向正确目标
 			if fileutil.IsSameFile(fi.Symlink, fi.FilePath) {
 				// 正常情况，已经指向目标文件，直接返回
 				return nil
 			}
 
-			// 是符号链接但指向错误 → 删除以覆盖
+			// 是符号链接但指向错误或损坏 → 删除以覆盖
 			if errRm := os.Remove(fi.Symlink); errRm != nil && !os.IsNotExist(errRm) {
 				return fmt.Errorf("CheckSymlink: failed to remove old symlink %q: %w", fi.Symlink, errRm)
 			}
 		} else {
 			// 不是符号链接或损坏（可能是普通文件 / 目录 / 权限异常）
+			// 在 Windows 环境下，其他进程可能已创建了指向目标文件的硬链接（不是符号链接）。
+			// 如果现有文件与目标文件相同，则不应备份或覆盖，直接返回成功。
+			if fileutil.IsSameFile(fi.Symlink, fi.FilePath) {
+				return nil
+			}
+
 			backup := fmt.Sprintf("%s.bak_%s", fi.Symlink, time.Now().Format("20060102150405"))
 			if errRe := os.Rename(fi.Symlink, backup); errRe != nil && !os.IsNotExist(errRe) {
 				return fmt.Errorf("CheckSymlink: failed to backup non-symlink %q: %w", fi.Symlink, errRe)
 			}
 		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("CheckSymlink: cannot stat %q: %w", fi.Symlink, err)
 	}
 
 	// -------------------------
 	// 2. 构造相对路径
 	// -------------------------
-	target := fi.Filename
+	target := fi.FilePath
 	if rel, err := filepath.Rel(symDir, fi.FilePath); err == nil {
 		target = rel
 	}
