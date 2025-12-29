@@ -100,7 +100,6 @@ type GeneratorFunc func(ctx context.Context) (RotateInfo, error)
 // generator 用于生成 RotateInfo，interval 表示回调周期。
 //
 // 推荐场景：自定义非时间轮转规则，例如按照写入大小切分。
-// NewRotateGenerator 初始化一个配置生成器
 func NewRotateGenerator(generator GeneratorFunc, interval time.Duration) RotateGenerator {
 	return &rotateGenerator{
 		p: periodic.NewPeriodicGeneratorFunc[RotateInfo](generator, interval),
