@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/lifei6671/rotatefiles/internal/fileutil"
@@ -93,7 +94,7 @@ func (fi RotateInfo) CheckSymlink() error {
 	}
 
 	// -------------------------
-	// 3. 创建符号链接（带 retry）
+	// 3. 创建符号链接（带 retry），在 Windows 上对无法创建符号链接的情况尝试回退为硬链接
 	// -------------------------
 	const retry = 3
 	var createErr error
@@ -116,7 +117,15 @@ func (fi RotateInfo) CheckSymlink() error {
 			continue
 		}
 
-		// 非 IsExist 错误直接返回
+		// 在 Windows 上，创建符号链接常因权限或策略被拒绝，尝试回退为硬链接（仅在同一卷内有效）
+		if runtime.GOOS == "windows" {
+			if linkErr := os.Link(fi.FilePath, fi.Symlink); linkErr == nil {
+				return nil
+			}
+			// 如果硬链接也失败，则记录原始错误作为返回
+		}
+
+		// 非 IsExist 错误直接返回（或在 Windows 回退失败后返回）
 		return fmt.Errorf("CheckSymlink: os.Symlink(%q → %q) failed: %w", target, fi.Symlink, createErr)
 	}
 

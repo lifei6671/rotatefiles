@@ -415,8 +415,11 @@ func (r *rotateFile) applyConfig(info RotateInfo) error {
 		r.buf = buf
 		r.outFile = fd
 	}
-	if err := info.CheckSymlink(); err != nil && r.onErr != nil {
-		r.onErr(fmt.Errorf("[applyConfig] check symlink failed: %w - %s", err, info.FilePath))
+	if err := info.CheckSymlink(); err != nil {
+		if r.onErr != nil {
+			r.onErr(fmt.Errorf("[applyConfig] check symlink failed: %w - %s", err, info.FilePath))
+		}
+		return fmt.Errorf("applyConfig: check symlink failed: %w - %s", err, info.FilePath)
 	}
 
 	r.cleanOldFilesLocked()
