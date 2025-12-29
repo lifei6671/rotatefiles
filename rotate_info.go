@@ -83,11 +83,6 @@ func (fi RotateInfo) CheckSymlink() error {
 			if fileutil.IsSameFile(fi.Symlink, fi.FilePath) {
 				return nil
 			}
-
-			backup := fmt.Sprintf("%s.bak_%s", fi.Symlink, time.Now().Format("20060102150405"))
-			if errRe := os.Rename(fi.Symlink, backup); errRe != nil && !os.IsNotExist(errRe) {
-				return fmt.Errorf("CheckSymlink: failed to backup non-symlink %q: %w", fi.Symlink, errRe)
-			}
 		}
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("CheckSymlink: cannot stat %q: %w", fi.Symlink, err)
@@ -112,7 +107,6 @@ func (fi RotateInfo) CheckSymlink() error {
 		if createErr == nil {
 			return nil
 		}
-
 		// 处理并发写入场景：
 		// 如果其他进程创建了 Symlink，则验证是否正确指向
 		if os.IsExist(createErr) {

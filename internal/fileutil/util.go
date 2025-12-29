@@ -46,10 +46,14 @@ func FileExists(filename string) bool {
 func IsSameFile(f1, f2 string) bool {
 	s1, e1 := os.Stat(f1)
 	s2, e2 := os.Stat(f2)
-	if e1 != nil || e2 != nil {
-		return false
+	if e1 == nil && e2 == nil && os.SameFile(s1, s2) {
+		return true
 	}
-	return os.SameFile(s1, s2)
+	same, err := sameFileByID(f1, f2)
+	if err == nil {
+		return same
+	}
+	return false
 }
 
 // RandomDelay 依据周期时间生成随机延迟时间
