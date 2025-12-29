@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -501,7 +500,6 @@ func (r *rotateFile) cleanOldFilesLocked() {
 		return matched[i] < matched[j]
 	})
 
-	log.Println(matched)
 	delList := matched[:len(matched)-r.opt.MaxFileNum]
 	for _, f := range delList {
 		if err := os.Remove(f); err != nil && r.onErr != nil {
