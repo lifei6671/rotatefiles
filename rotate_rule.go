@@ -20,7 +20,7 @@ var defaultRotateRules = map[string]*rotateRule{
 		SuffixFunc: func() string {
 			return "." + time.Now().Format("2006010215")
 		},
-		SuffixExpr: regexp.MustCompile(`^\.[]0-9]{10}$`),
+		SuffixExpr: regexp.MustCompile(`^\.[0-9]{10}$`),
 	},
 	"1day": {
 		Duration: 24 * time.Hour,
@@ -64,7 +64,7 @@ var defaultRotateRules = map[string]*rotateRule{
 			now := time.Now()
 			return "." + now.Format("2006010215") + fmt.Sprintf("%02d", now.Minute()/10*10)
 		},
-		SuffixExpr: regexp.MustCompile(`^\.[0-9]{10}$`),
+		SuffixExpr: regexp.MustCompile(`^\.[0-9]{12}$`),
 	},
 	"15min": {
 		Duration: 15 * time.Minute,
@@ -73,7 +73,7 @@ var defaultRotateRules = map[string]*rotateRule{
 			now := time.Now()
 			return "." + now.Format("2006010215") + fmt.Sprintf("%02d", now.Minute()/15*15)
 		},
-		SuffixExpr: regexp.MustCompile(`^\.[0-9]{15}$`),
+		SuffixExpr: regexp.MustCompile(`^\.[0-9]{12}$`),
 	},
 	"30min": {
 		Duration: 30 * time.Minute,
@@ -82,7 +82,7 @@ var defaultRotateRules = map[string]*rotateRule{
 			now := time.Now()
 			return "." + now.Format("2006010215") + fmt.Sprintf("%02d", now.Minute()/30*30)
 		},
-		SuffixExpr: regexp.MustCompile(`^\.[0-9]{30}$`),
+		SuffixExpr: regexp.MustCompile(`^\.[0-9]{12}$`),
 	},
 }
 
