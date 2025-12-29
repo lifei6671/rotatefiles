@@ -460,6 +460,9 @@ func (r *rotateFile) cleanOldFilesLocked() {
 	base := filepath.Base(r.currentCfg.Filename)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
+		if r.onErr != nil {
+			r.onErr(fmt.Errorf("[doFlush] read dir failed: %w", err))
+		}
 		return
 	}
 
